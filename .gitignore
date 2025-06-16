@@ -1,3 +1,7 @@
+# P4 switch logs and output
+skeleton/TP-skel/logs/
+skeleton/TP-skel/pcaps/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
