@@ -2,28 +2,20 @@
 import os
 import sys
 
-from INT_headers import INTParent, INTChild
 from scapy.all import (
     TCP,
-    # FieldLenField,
-    # FieldListField,
-    # IntField,
-    # IPOption,
-    # ShortField,
+    FieldLenField,
+    FieldListField,
+    IntField,
+    IPOption,
+    ShortField,
     get_if_list,
     sniff,
-    # Packet,
-    # BitField,
-    # ByteField,
-    # ShortField,
-    # IntField,
-    # LongField,
-    # bind_layers,
-    # Ether,
-    # IP,
-    get_if_list,
-    sniff,
+    hexdump,
+    Raw,
 )
+from scapy.layers.inet import _IPOption_HDR
+from INT_headers import INTParent, INTChild
 
 
 def get_if():
@@ -39,60 +31,29 @@ def get_if():
     return iface
 
 
-# class IPOption_MRI(IPOption):
-#     name = "MRI"
-#     option = 31
-#     fields_desc = [
-#         _IPOption_HDR,
-#         FieldLenField(
-#             "length", None, fmt="B", length_of="swids", adjust=lambda pkt, l: l + 4
-#         ),
-#         ShortField("count", 0),
-#         FieldListField(
-#             "swids", [], IntField("", 0), length_from=lambda pkt: pkt.count * 4
-#         ),
-#     ]
+class IPOption_MRI(IPOption):
+    name = "MRI"
+    option = 31
+    fields_desc = [
+        _IPOption_HDR,
+        FieldLenField(
+            "length", None, fmt="B", length_of="swids", adjust=lambda pkt, l: l + 4
+        ),
+        ShortField("count", 0),
+        FieldListField(
+            "swids", [], IntField("", 0), length_from=lambda pkt: pkt.count * 4
+        ),
+    ]
 
 
 def handle_pkt(pkt):
-    # if INTParent in pkt:
-    #     print("### INT Parent ###")
-    #     pkt[INTParent].show2()
-    # if INTChild in pkt:
-    #     print("### INT Child ###")
-    #     int_child = pkt[INTChild]
-    #     while int_child:
-    #         int_child.show2()
-    #         if hasattr(int_child, 'payload') and isinstance(int_child.payload, INTChild):
-    #             int_child = int_child.payload
-    #         else:
-    #             break
-
-
-    # if TCP in pkt and pkt[TCP].dport == 1234:
-    #     print("got a packet")
-    #     pkt.show2()
-    #     #    hexdump(pkt)
-    #     sys.stdout.flush()
-
-    
-    if INTParent in pkt or INTChild in pkt or (TCP in pkt and pkt[TCP].dport == 1234):
+    # if TCP in pkt and pkt[TCP].dport == 1234: # Only check for TCP packets with destination port 1234
+    if (
+        INTParent in pkt or INTChild in pkt or (TCP in pkt and pkt[TCP].dport == 1234)
+    ):  # Check for INTParent or INTChild headers, or TCP packets with dport 1234
         print("got a packet")
-        if INTParent in pkt:
-            print("### INT Parent ###")
-            pkt[INTParent].show2()
-        if INTChild in pkt:
-            print("### INT Child(ren) ###")
-            int_child = pkt[INTChild]
-            while int_child:
-                int_child.show2()
-                # Traverse possible stack of INTChild headers
-                if hasattr(int_child, 'payload') and isinstance(int_child.payload, INTChild):
-                    int_child = int_child.payload
-                else:
-                    break
-        if TCP in pkt:
-            pkt.show2()
+        pkt.show2()
+        #    hexdump(pkt)
         sys.stdout.flush()
 
 
