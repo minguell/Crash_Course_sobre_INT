@@ -76,24 +76,32 @@ def handle_pkt(pkt):
     #     sys.stdout.flush()
 
     
-    if INTParent in pkt or INTChild in pkt or (TCP in pkt and pkt[TCP].dport == 1234):
-        print("got a packet")
-        if INTParent in pkt:
-            print("### INT Parent ###")
-            pkt[INTParent].show2()
-        if INTChild in pkt:
-            print("### INT Child(ren) ###")
-            int_child = pkt[INTChild]
-            while int_child:
-                int_child.show2()
-                # Traverse possible stack of INTChild headers
-                if hasattr(int_child, 'payload') and isinstance(int_child.payload, INTChild):
-                    int_child = int_child.payload
-                else:
-                    break
-        if TCP in pkt:
+    # if INTParent in pkt or INTChild in pkt or (TCP in pkt and pkt[TCP].dport == 1234):
+        # print("got a packet")
+        # if INTParent in pkt:
+        #     print("### INT Parent ###")
+        #     pkt[INTParent].show2()
+        # if INTChild in pkt:
+        #     print("### INT Children ###")
+        #     int_child = pkt[INTChild]
+        #     while int_child:
+        #         int_child.show2()
+        #         # Traverse possible stack of INTChild headers
+        #         if hasattr(int_child, 'payload') and isinstance(int_child.payload, INTChild):
+        #             int_child = int_child.payload
+        #         else:
+        #             break
+        # if TCP in pkt:
+        #     pkt.show2()
+        # sys.stdout.flush()
+        if INTParent in pkt or INTChild in pkt or (TCP in pkt and pkt[TCP].dport == 1234):
+            print("got a packet")
+            # if INTParent in pkt:
+            #     pkt[INTParent].show2()
+            # if TCP in pkt:
+            #     pkt.show2()
             pkt.show2()
-        sys.stdout.flush()
+            sys.stdout.flush()
 
 
 def main():

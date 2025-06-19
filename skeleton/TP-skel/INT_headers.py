@@ -15,11 +15,11 @@ class INTParent(Packet):
 class INTChild(Packet):
     name = "INTChild"
     fields_desc = [
-        IntField("ID_Switch", 0),
-        BitField("Porta_Entrada", 0, 9),
-        BitField("Porta_Saida", 0, 9),
-        LongField("Timestamp", 0),
-        ShortField("next_header", 0),
+        IntField("id_switch", 0),
+        BitField("ingress_port", 0, 9),
+        BitField("egress_port", 0, 9),
+        BitField("timestamp", 0, 48),
+        ByteField("next_header", 0),  # 8 bits, matches P4
         BitField("enq_qdepth", 0, 19),
         IntField("pkt_length", 0),
         BitField("padding", 0, 3)
