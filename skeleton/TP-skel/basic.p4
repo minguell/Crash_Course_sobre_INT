@@ -3,8 +3,13 @@
 #include <v1model.p4>
 
 const bit<16> TYPE_IPV4 = 0x800;
-const bit<16> TYPE_INT_PARENT = 0x111;
-const bit<16> TYPE_INT_CHILD = 0x666;
+const bit<8> TYPE_INT_PARENT = 0xFD;
+const bit<8> TYPE_INT_CHILD = 0xFE;
+
+const bit<32> MTU = 1500;
+const bit<32> INT_CHILD_SIZE = 21; // size in bytes of int_child_t header
+
+#define MAX_INT_CHILDS 8 // Adjust to fit MTU
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -36,44 +41,36 @@ header ipv4_t {
 }
 
 struct metadata {
-    bit<8> int_hop_count;      // How many INT children have been added so far (for internal logic)
-    bit<1> is_int_packet;      // Flag: is this packet being monitored by INT?
-    bit<1> mtu_overflow_flag;   // For the MTU bonus: set if the INT header would overflow the MTU
+    bit<8> int_hop_count;
+    bit<1> is_int_packet;
+    bit<1> mtu_overflow_flag;
 }
 
 header int_parent_t{
-    bit<32> Child_Length;
-    bit<32> Childs;
-    //* Outros Dados*//
+    bit<32> child_length;
+    bit<32> childs;
+    bit<8> next_header;
 }
 
 
 header int_child_t{
-    bit<32> ID_Switch;
-    bit<9> Porta_Entrada;
-    bit<9> Porta_Saida;
-    bit<48> Timestamp;
-    bit<16> next_header;        // Indica o próximo cabeçalho (ex.: IPv4)
-    bit<19> enq_qdepth;      // Profundidade da fila de entrada
-    bit<32> pkt_length;      // Comprimento do pacote
-    //* Outros Dados *//
-    bit<3> padding; // O tamanho do cabecalho em bits deve ser multiplo de 8
+    bit<32> id_switch;
+    bit<9> ingress_port;
+    bit<9> egress_port;
+    bit<48> timestamp;
+    bit<8> next_header;
+    bit<19> enq_qdepth;
+    bit<32> pkt_length;
+    bit<3> padding; // The header size must be a multiple of 8 bits (1 byte)
 }
 
-const bit<8> MAX_INT_CHILD = 8;
 
-// Add to the headers struct:
 struct headers {
-    ethernet_t   ethernet;
-    ipv4_t       ipv4;
-    int_parent_t int_parent;
-    int_child_t  int_child;
+    ethernet_t                   ethernet;
+    ipv4_t                       ipv4;
+    int_parent_t                 int_parent;
+    int_child_t[MAX_INT_CHILDS]  int_childs; // Fixed size array for INT children (may be unessary)
 }
-
-// struct headers {
-//     ethernet_t   ethernet;
-//     ipv4_t       ipv4;
-// }
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -88,63 +85,43 @@ parser MyParser(packet_in packet,
         transition parse_ethernet;
     }
 
+    // State to process the Ethernet header
     state parse_ethernet {
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
-            TYPE_INT_PARENT: parse_int_parent; // Se for tipo INT Pai, vai para parse_int_parent
-            TYPE_IPV4: parse_ipv4;       // Se for IPv4, vai para parse_ipv4
+            TYPE_IPV4: parse_ipv4;
             default: accept;
         }
     }
 
-    // Estado para processar pacotes IPv4
+    // State to process the IPv4 header
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
-        transition accept;
+        transition select(hdr.ipv4.protocol) {
+            TYPE_INT_PARENT: parse_int_parent; 
+            TYPE_INT_CHILD: parse_int_child;
+            default: accept;
+        }
     }
 
-    // Estado para processar o cabeçalho INT Pai
+    // State to process the INT Parent header
     state parse_int_parent {
         packet.extract(hdr.int_parent);
-        transition parse_int_child;
+        transition select(hdr.int_parent.next_header) {
+            TYPE_INT_CHILD: parse_int_child;
+            default: accept;
+        }
     }
 
-    // Estado para processar o cabeçalho INT Filho
+    // State to process the INT Child header
     state parse_int_child {
-        packet.extract(hdr.int_child);
-        transition select(hdr.int_child.next_header) {
-            TYPE_INT_CHILD: parse_int_child; // Se houver mais filhos, processa o próximo
-            TYPE_IPV4: parse_ipv4;           // Caso contrário, processa IPv4
+        packet.extract(hdr.int_childs.next);
+        transition select(hdr.int_childs.last.next_header) {
+            TYPE_INT_CHILD: parse_int_child;
             default: accept;
         }
     }
 }
-
-
-
-// parser MyParser(packet_in packet,
-//                 out headers hdr,
-//                 inout metadata meta,
-//                 inout standard_metadata_t standard_metadata) {
-
-//     state start {
-//         transition parse_ethernet;
-//     }
-
-//     state parse_ethernet {
-//         packet.extract(hdr.ethernet);
-//         transition select(hdr.ethernet.etherType) {
-//             TYPE_IPV4: parse_ipv4;
-//             default: accept;
-//         }
-//     }
-
-//     state parse_ipv4 {
-//         packet.extract(hdr.ipv4);
-//         transition accept;
-//     }
-
-// }
 
 /*************************************************************************
 ************   C H E C K S U M    V E R I F I C A T I O N   *************
@@ -153,7 +130,6 @@ parser MyParser(packet_in packet,
 control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
     apply {  }
 }
-
 
 /*************************************************************************
 **************  I N G R E S S   P R O C E S S I N G   *******************
@@ -175,26 +151,33 @@ control MyIngress(inout headers hdr,
 
     action add_int_parent() {
         hdr.int_parent.setValid();
-        hdr.int_parent.Child_Length = 0;
-        hdr.int_parent.Childs = 0;
+        hdr.int_parent.child_length = 0;
+        hdr.int_parent.childs = 0;
     }
 
     action add_int_child(
-        bit<9> porta_entrada,
-        bit<9> porta_saida,
+        bit<9> ingress_port,
+        bit<9> egress_port,
         bit<48> timestamp,
         bit<19> enq_qdepth,
         bit<32> pkt_length
     ) {
-        hdr.int_child.setValid();
-        hdr.int_child.ID_Switch = (bit<32>)porta_entrada;
-        hdr.int_child.Porta_Entrada = porta_entrada;
-        hdr.int_child.Porta_Saida = porta_saida;
-        hdr.int_child.Timestamp = timestamp;
-        hdr.int_child.enq_qdepth = enq_qdepth;
-        hdr.int_child.pkt_length = pkt_length;
-        hdr.int_parent.Childs = hdr.int_parent.Childs + 1;
-        hdr.int_child.next_header = TYPE_IPV4;
+        if (hdr.int_parent.childs < hdr.int_childs.size) {
+            hdr.int_childs.push_front(1);
+            hdr.int_childs[0].setValid();
+            hdr.int_childs[0].id_switch = (bit<32>)ingress_port;
+            hdr.int_childs[0].ingress_port = ingress_port;
+            hdr.int_childs[0].egress_port = egress_port;
+            hdr.int_childs[0].timestamp = timestamp;
+            hdr.int_childs[0].enq_qdepth = enq_qdepth;
+            hdr.int_childs[0].pkt_length = pkt_length;
+            hdr.int_childs[0].next_header = TYPE_INT_CHILD;
+            hdr.int_parent.childs = hdr.int_parent.childs + 1;
+        }
+        else {
+            meta.mtu_overflow_flag = 1;
+            drop();
+        }
     }
 
     table ipv4_lpm {
@@ -215,17 +198,14 @@ control MyIngress(inout headers hdr,
             ipv4_lpm.apply();
         }
         
-        const bit<32> MTU = 1500;
-        const bit<32> INT_CHILD_SIZE = 21; // tamanho em bytes do seu cabeçalho int_child_t
-        
         if ((standard_metadata.packet_length + INT_CHILD_SIZE) > MTU) {
             meta.mtu_overflow_flag = 1;
-            // Não adicione o filho INT!
+            // Do not add INT headers if MTU is exceeded
         } else {
             meta.mtu_overflow_flag = 0;
 
             if (hdr.int_parent.isValid()) {
-            // Se o cabeçalho INT Pai já existe, adiciona um novo filho
+            // If the INT Parent header is already present, add a new INT Child
             add_int_child(
                 standard_metadata.ingress_port,
                 standard_metadata.egress_spec,
@@ -236,7 +216,7 @@ control MyIngress(inout headers hdr,
             meta.int_hop_count = meta.int_hop_count + 1;
 
             } else {
-                // Caso contrário, cria um novo cabeçalho INT Pai e um Filho
+                // If the INT Parent header is not present, create it and add the first INT Child
                 add_int_parent();
                 add_int_child(
                     standard_metadata.ingress_port,
@@ -293,14 +273,8 @@ control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.ipv4);
-        // packet.emit(hdr.ethernet);  // Emite o cabeçalho Ethernet
-        // packet.emit(hdr.ipv4);      // Emite o cabeçalho IPv4
-
-        // // Emite o cabeçalho int_pai se for válido
-        // packet.emit(hdr.int_pai);
-
-        // // Emite o cabeçalho int_filho se for válido
-        // packet.emit(hdr.int_filho);
+        packet.emit(hdr.int_parent);
+        packet.emit(hdr.int_childs);
     }
 }
 
