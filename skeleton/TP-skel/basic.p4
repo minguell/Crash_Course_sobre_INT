@@ -2,9 +2,9 @@
 #include <core.p4>
 #include <v1model.p4>
 
-const bit<16> TYPE_IPV4 = 0x800;
-const bit<8> TYPE_INT_PARENT = 0xFD;
-const bit<8> TYPE_INT_CHILD = 0xFE;
+const bit<16> TYPE_IPV4 = 0x0800;
+const bit<16> TYPE_INT_PARENT = 0xFE00;
+const bit<16> TYPE_INT_CHILD = 0xFE01;
 
 const bit<32> MTU = 1500;
 const bit<32> INT_CHILD_SIZE = 21; // size in bytes of int_child_t header
@@ -49,7 +49,7 @@ struct metadata {
 header int_parent_t{
     bit<32> child_length;
     bit<32> childs;
-    bit<8> next_header;
+    bit<16> next_header;
 }
 
 
@@ -58,7 +58,7 @@ header int_child_t{
     bit<9> ingress_port;
     bit<9> egress_port;
     bit<48> timestamp;
-    bit<8> next_header;
+    bit<16> next_header;
     bit<19> enq_qdepth;
     bit<32> pkt_length;
     bit<3> padding; // The header size must be a multiple of 8 bits (1 byte)
@@ -67,9 +67,9 @@ header int_child_t{
 
 struct headers {
     ethernet_t                   ethernet;
-    ipv4_t                       ipv4;
     int_parent_t                 int_parent;
     int_child_t[MAX_INT_CHILDS]  int_childs; // Fixed size array for INT children (may be unessary)
+    ipv4_t                       ipv4;
 }
 
 /*************************************************************************
@@ -88,15 +88,8 @@ parser MyParser(packet_in packet,
     state parse_ethernet {
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
-            TYPE_IPV4: parse_ipv4;
-            default: accept;
-        }
-    }
-
-    state parse_ipv4 {
-        packet.extract(hdr.ipv4);
-        transition select(hdr.ipv4.protocol) {
             TYPE_INT_PARENT: parse_int_parent;
+            TYPE_IPV4: parse_ipv4;
             default: accept;
         }
     }
@@ -104,12 +97,11 @@ parser MyParser(packet_in packet,
     // State to process the INT Parent header
     state parse_int_parent {
         packet.extract(hdr.int_parent);
-        transition accept;
-        // Process INT Child headers if present
-        // transition select(hdr.int_parent.next_header) {
-        //     TYPE_INT_CHILD: parse_int_child;
-        //     default: accept;
-        // }
+        transition select(hdr.int_parent.next_header) {
+            // TYPE_INT_CHILD: parse_int_child;
+            TYPE_IPV4: parse_ipv4;
+            default: accept;
+        }
     }
 
     // State to process the INT Child header
@@ -120,6 +112,15 @@ parser MyParser(packet_in packet,
     //         default: accept;
     //     }
     // }
+
+    state parse_ipv4 {
+        packet.extract(hdr.ipv4);
+        transition accept; // Accept IPv4 packets without INT headers
+        // transition select(hdr.ipv4.protocol) {
+        //     TYPE_INT_PARENT: parse_int_parent;
+        //     default: accept;
+        // }
+    }
 
 }
 
@@ -154,8 +155,8 @@ control MyIngress(inout headers hdr,
         hdr.int_parent.setValid();
         hdr.int_parent.child_length = 0;
         hdr.int_parent.childs = 0;
-        hdr.int_parent.next_header = TYPE_INT_PARENT;
-        hdr.ipv4.protocol = TYPE_INT_PARENT;
+        hdr.int_parent.next_header = TYPE_IPV4;
+        hdr.ethernet.etherType = TYPE_INT_PARENT;
     }
 
     // Action to add an INT Child header
@@ -175,7 +176,7 @@ control MyIngress(inout headers hdr,
     //         hdr.int_childs[0].timestamp = timestamp;
     //         hdr.int_childs[0].enq_qdepth = enq_qdepth;
     //         hdr.int_childs[0].pkt_length = pkt_length;
-    //         hdr.int_childs[0].next_header = TYPE_INT_CHILD;
+    //         hdr.int_childs[0].next_header = TYPE_IPV4; // TODO: change according to the next header type
     //         hdr.int_parent.childs = hdr.int_parent.childs + 1;
     //     }
     //     else {
@@ -203,39 +204,40 @@ control MyIngress(inout headers hdr,
             if(!hdr.int_parent.isValid()) {
                 add_int_parent();  // Adds the INT Parent header but makes many packets arrive at the host
             }
+            else {
+                // // Check if the packet is an INT packet
+                // if ((standard_metadata.packet_length + INT_CHILD_SIZE) > MTU) {
+                //     meta.mtu_overflow_flag = 1;
+                //     // Do not add INT headers if MTU is exceeded
+                // } else {
+                //     meta.mtu_overflow_flag = 0;
+
+                //     if (hdr.int_parent.isValid()) {
+                //     // If the INT Parent header is already present, add a new INT Child
+                //     add_int_child(
+                //         standard_metadata.ingress_port,
+                //         standard_metadata.egress_spec,
+                //         standard_metadata.ingress_global_timestamp,
+                //         standard_metadata.enq_qdepth,
+                //         standard_metadata.packet_length
+                //     );
+                //     meta.int_hop_count = meta.int_hop_count + 1;
+
+                //     } else {
+                //         // If the INT Parent header is not present, create it and add the first INT Child
+                //         add_int_parent();
+                //         add_int_child(
+                //             standard_metadata.ingress_port,
+                //             standard_metadata.egress_spec,
+                //             standard_metadata.ingress_global_timestamp,
+                //             standard_metadata.enq_qdepth,
+                //             standard_metadata.packet_length
+                //         );
+                //         meta.int_hop_count = 0; // First child just added
+                //     }
+                // }
+            }
         }
-
-        // Check if the packet is an INT packet
-        // if ((standard_metadata.packet_length + INT_CHILD_SIZE) > MTU) {
-        //     meta.mtu_overflow_flag = 1;
-        //     // Do not add INT headers if MTU is exceeded
-        // } else {
-        //     meta.mtu_overflow_flag = 0;
-
-        //     if (hdr.int_parent.isValid()) {
-        //     // If the INT Parent header is already present, add a new INT Child
-        //     add_int_child(
-        //         standard_metadata.ingress_port,
-        //         standard_metadata.egress_spec,
-        //         standard_metadata.ingress_global_timestamp,
-        //         standard_metadata.enq_qdepth,
-        //         standard_metadata.packet_length
-        //     );
-        //     meta.int_hop_count = meta.int_hop_count + 1;
-
-        //     } else {
-        //         // If the INT Parent header is not present, create it and add the first INT Child
-        //         add_int_parent();
-        //         add_int_child(
-        //             standard_metadata.ingress_port,
-        //             standard_metadata.egress_spec,
-        //             standard_metadata.ingress_global_timestamp,
-        //             standard_metadata.enq_qdepth,
-        //             standard_metadata.packet_length
-        //         );
-        //         meta.int_hop_count = 0; // First child just added
-        //     }
-        // }
     }
 }
 
@@ -280,9 +282,9 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
-        packet.emit(hdr.ipv4);
         packet.emit(hdr.int_parent);
-        // packet.emit(hdr.int_childs); // Emit all INT children headers
+        packet.emit(hdr.ipv4);
+        packet.emit(hdr.int_childs); // Emit all INT children headers
     }
 }
 
