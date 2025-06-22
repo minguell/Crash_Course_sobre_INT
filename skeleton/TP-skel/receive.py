@@ -11,10 +11,9 @@ from scapy.all import (
     ShortField,
     get_if_list,
     sniff,
-    hexdump,
-    Raw,
 )
 from scapy.layers.inet import _IPOption_HDR
+
 from INT_headers import INTParent, INTChild
 
 
@@ -47,10 +46,7 @@ class IPOption_MRI(IPOption):
 
 
 def handle_pkt(pkt):
-    # if TCP in pkt and pkt[TCP].dport == 1234: # Only check for TCP packets with destination port 1234
-    if (
-        INTParent in pkt or INTChild in pkt or (TCP in pkt and pkt[TCP].dport == 1234)
-    ):  # Check for INTParent or INTChild headers, or TCP packets with dport 1234
+    if INTParent in pkt and INTChild in pkt and (TCP in pkt and pkt[TCP].dport == 1234):
         print("got a packet")
         pkt.show2()
         #    hexdump(pkt)
