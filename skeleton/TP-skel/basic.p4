@@ -47,12 +47,13 @@ struct metadata {
     bit<1>          mtu_overflow_flag;
 }
 
+
 header int_parent_t{
     bit<32>         child_length;
     bit<32>         childs;
     bit<16>         next_header;
+    bit<8>          mtu_overflow;
 }
-
 
 header int_child_t{
     bit<32>         id_switch;
@@ -61,10 +62,9 @@ header int_child_t{
     // bit<9>       ingress_port;       // Issue with field not multiple of 8 bits
     // bit<9>       egress_port;        // Issue with field not multiple of 8 bits
     // bit<19>      enq_qdepth;         // Issue with field not multiple of 8 bits
-    // bit<3>       padding;            // Issue with field not multiple of 8 bits The header size must be a multiple of 8 bits
+    // bit<3>       padding;            // Issue with field not multiple of 8 bits (The header size must be a multiple of 8 bits)
     bit<16>         next_header;
 }
-
 
 struct headers {
     ethernet_t                  ethernet;
@@ -159,6 +159,7 @@ control MyIngress(inout headers hdr,
         hdr.int_parent.child_length = INT_CHILD_SIZE;
         hdr.int_parent.childs = 1;
         hdr.int_parent.next_header = TYPE_INT_CHILD;
+        hdr.int_parent.mtu_overflow = 0;
         hdr.ethernet.etherType = TYPE_INT_PARENT;
 
         hdr.int_childs[0].setValid();
@@ -217,7 +218,9 @@ control MyIngress(inout headers hdr,
             ipv4_lpm.apply();
             if ((standard_metadata.packet_length + INT_CHILD_SIZE) > MTU) {
                 meta.mtu_overflow_flag = 1;
-                // drop(); // Optionally drop or skip INT
+                if (!hdr.int_parent.isValid()) {
+                    hdr.int_parent.mtu_overflow = 1;
+                }
             } 
             else {
                 meta.mtu_overflow_flag = 0;

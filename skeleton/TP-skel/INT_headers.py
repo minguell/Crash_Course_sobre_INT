@@ -1,5 +1,5 @@
 from scapy.all import *
-from scapy.layers.inet import Ether, IP, TCP
+from scapy.layers.inet import Ether, IP
 
 TYPE_INT_PARENT = 0xFE00
 TYPE_INT_CHILD = 0xFE01
@@ -12,6 +12,7 @@ class INTParent(Packet):
         IntField("child_length", 0),
         IntField("childs", 0),
         ShortField("next_header", 0),
+        ByteField("mtu_overflow", 0),
     ]
 
 
